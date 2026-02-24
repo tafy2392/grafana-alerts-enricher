@@ -81,20 +81,17 @@ app = FastAPI(
 @app.post("/alert")
 async def receive_alert(request: Request):
     """
-    Receives an alert (Grafana/Prometheus format), logs it, enriches it with
-    required ITSM labels (static + conditional + dynamic), and returns the result.
+    Accept both Grafana's webhook wrapper payload and array-only payloads.
+    Enrich the inner alerts with ITSM labels and return the same structure
+    as received. Optionally forward to Alertmanager if ALERTMANAGER_URL is set.
     """
 
-    # ---------------------------------------------------------
-    # Read raw request body for debug logging
-    # ---------------------------------------------------------
+    # 1) Read and log raw body for debugging
     raw_body = await request.body()
     print("\n================ RAW INCOMING ALERT ================")
     print(raw_body.decode())
 
-    # ---------------------------------------------------------
-    # Parse JSON body
-    # ---------------------------------------------------------
+    # 2) Parse JSON
     try:
         payload = await request.json()
     except Exception:
@@ -103,85 +100,75 @@ async def receive_alert(request: Request):
     print("\n================ PARSED JSON =======================")
     print(json.dumps(payload, indent=2))
 
-    # ---------------------------------------------------------
-    # Enrich the alert payload
-    # Grafana/Alertmanager sends a list[] of alerts
-    # ---------------------------------------------------------
-    if not isinstance(payload, list):
+    # 3) Normalize: detect format (Grafana wrapper vs array-only)
+    is_wrapper = isinstance(payload, dict) and "alerts" in payload and isinstance(payload["alerts"], list)
+    if is_wrapper:
+        alerts = payload["alerts"]  # Grafana format: { ..., "alerts": [ ... ] }
+    elif isinstance(payload, list):
+        alerts = payload            # Array-only format: [ ... ]
+    else:
         raise HTTPException(
             status_code=400,
-            detail="Alert payload must be a JSON list of alert objects."
+            detail="Unsupported payload: must be an object with 'alerts' list (Grafana) or a top-level list of alert objects."
         )
 
-    enriched_payload = []
-
-    for alert in payload:
-        # Ensure label & annotation sections exist
+    # 4) Enrich each alert
+    enriched_alerts = []
+    for alert in alerts:
         alert.setdefault("labels", {})
         alert.setdefault("annotations", {})
-
         labels = alert["labels"]
 
-        # ---------------------------------------------------------
-        # STATIC LABELS (mandatory)
-        # ---------------------------------------------------------
+        # --- Static labels
         labels["integration"] = "external"
         labels["itsm_enabled"] = "true"
         labels["itsm_environment"] = os.getenv("HOST_ENVIRONMENT", "development")  # or "production"
         labels["teams_enabled"] = "false"
-        labels["namespace"] = "monitoring"
+        labels["namespace"] = os.getenv("ALERT_NAMESPACE", "monitoring")
 
-        # If missing, default to critical
+        # Default severity if missing
         labels["severity"] = labels.get("severity", "info")
 
-        # ---------------------------------------------------------
-        # CONDITIONAL LABELS (required only when itsm_enabled=true)
-        # ---------------------------------------------------------
+        # --- Conditional labels when ITSM is enabled
         if labels["itsm_enabled"] == "true":
             labels["itsm_app_id"] = os.getenv("ITSM_APP_ID", "APPD-123456")
             labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP123456789")
-
             forced_event_id = os.getenv("ITSM_EVENT_ID")
             labels["itsm_event_id"] = forced_event_id if forced_event_id else generate_itsm_event_id()
-
             labels["itsm_severity"] = compute_itsm_severity(labels.get("severity", "info"))
 
-        # ---------------------------------------------------------
-        # DYNAMIC LABELS
-        # ---------------------------------------------------------
+        # --- Dynamic labels / metadata
         labels["cluster_name"] = os.getenv("CLUSTER_NAME", "unknown-cluster")
-
-        # ---------------------------------------------------------
-        # INTERNAL ENRICHMENT METADATA
-        # ---------------------------------------------------------
         labels["enriched_by"] = "fastapi-lifespan-proxy"
         alert["annotations"]["processed_at"] = "lifespan-proxy"
 
-        enriched_payload.append(alert)
+        enriched_alerts.append(alert)
+
+    # 5) Rebuild the response in the SAME SHAPE as input
+    if is_wrapper:
+        enriched_body = dict(payload)  # preserve other top-level fields from Grafana
+        enriched_body["alerts"] = enriched_alerts
+    else:
+        enriched_body = enriched_alerts
 
     print("\n================ ENRICHED JSON =====================")
-    print(json.dumps(enriched_payload, indent=2))
+    print(json.dumps(enriched_body, indent=2))
 
-    # ---------------------------------------------------------
-    # Optional: Forward to Alertmanager (if configured)
-    # ---------------------------------------------------------
+    # 6) Optional: Forward to Alertmanager, preserving shape
     alertmanager_url = os.getenv("ALERTMANAGER_URL")
-
     if alertmanager_url:
         try:
             resp = await client.post(
                 alertmanager_url,
-                json=enriched_payload,
+                json=enriched_body,
                 headers={"Content-Type": "application/json"},
             )
             print(f"Forwarded to Alertmanager → HTTP {resp.status_code}")
         except Exception as e:
             print("ERROR sending to Alertmanager:", e)
 
-    # ---------------------------------------------------------
-    # Return enriched alert to caller
-    # ---------------------------------------------------------
-    return enriched_payload
+    # 7) Return enriched payload (same shape as received)
+    return enriched_body
 
 # ---------------------------------------------------------
 # Manual development runner
