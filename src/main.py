@@ -169,16 +169,31 @@ async def receive_alert(request: Request):
     print("\n================ ENRICHED JSON =====================")
     print(json.dumps(enriched_body, indent=2))
 
-    # 6) Optional: Forward to Alertmanager, preserving shape
+    # 6) Optional: Forward to Alertmanager, preserving SHAPE for the caller,
+    #    but converting to Alertmanager's expected array format for forwarding.
     alertmanager_url = os.getenv("ALERTMANAGER_URL")
     if alertmanager_url:
+        # Build the Alertmanager v2 payload: MUST be a top-level list of alerts
+        if is_wrapper:
+            am_payload = enriched_alerts  # extract only the alerts list
+        else:
+            am_payload = enriched_body    # already a list of alerts
+
         try:
             resp = await client.post(
-                alertmanager_url,
-                json=enriched_body,
+                alertmanager_url,  # e.g., http://alertmanager:9093/api/v2/alerts
+                json=am_payload,
                 headers={"Content-Type": "application/json"},
             )
             print(f"Forwarded to Alertmanager → HTTP {resp.status_code}")
+            if resp.status_code >= 300:
+                print(f"ERROR forwarding to Alertmanager: HTTP {resp.status_code}")
+                try:
+                    print("Response body:", resp.text)
+                except Exception:
+                    pass
+            else:
+                print(f"Forwarded to Alertmanager → HTTP {resp.status_code}")
         except Exception as e:
             print("ERROR sending to Alertmanager:", e)
 
