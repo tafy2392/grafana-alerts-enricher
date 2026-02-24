@@ -5,6 +5,17 @@ import httpx
 from fastapi import FastAPI, Request, HTTPException
 import json
 
+
+import string
+import secrets
+
+
+def generate_itsm_event_id(length: int = 5) -> str:
+    """Return a random uppercase alphabetic string of given length (default 5)."""
+    alphabet = string.ascii_uppercase  # 'A'..'Z'
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
 # ---------------------------------------------------------
 # Globals
 # ---------------------------------------------------------
@@ -116,20 +127,23 @@ async def receive_alert(request: Request):
         # ---------------------------------------------------------
         labels["integration"] = "external"
         labels["itsm_enabled"] = "true"
-        labels["itsm_environment"] = "development"   # or "production"
+        labels["itsm_environment"] = os.getenv("HOST_ENVIRONMENT", "development")  # or "production"
         labels["teams_enabled"] = "false"
-        labels["namespace"] = "example-namespace"
+        labels["namespace"] = "monitoring"
 
         # If missing, default to critical
-        labels["severity"] = labels.get("severity", "critical")
+        labels["severity"] = labels.get("severity", "info")
 
         # ---------------------------------------------------------
         # CONDITIONAL LABELS (required only when itsm_enabled=true)
         # ---------------------------------------------------------
         if labels["itsm_enabled"] == "true":
-            labels["itsm_app_id"] = "APPD-123456"
-            labels["itsm_contract_id"] = "10APP123456789"
-            labels["itsm_event_id"] = "12345"
+            labels["itsm_app_id"] = os.getenv("ITSM_APP_ID", "APPD-123456")
+            labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP123456789")
+
+            forced_event_id = os.getenv("ITSM_EVENT_ID")
+            labels["itsm_event_id"] = forced_event_id if forced_event_id else generate_itsm_event_id()
+
             labels["itsm_severity"] = compute_itsm_severity(labels.get("severity", "info"))
 
         # ---------------------------------------------------------
@@ -175,5 +189,5 @@ async def receive_alert(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    HOST_BIND = os.getenv("HOST_BIND", "127.0.0.1")
+    HOST_BIND = os.getenv("HOST_BIND", "0.0.0.0")
     uvicorn.run("src.main:app", host=HOST_BIND, port=8080, reload=True)
