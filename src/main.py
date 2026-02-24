@@ -131,8 +131,8 @@ async def receive_alert(request: Request):
 
         # --- Conditional labels when ITSM is enabled
         if labels["itsm_enabled"] == "true":
-            labels["itsm_app_id"] = os.getenv("ITSM_APP_ID", "APPD-123456")
-            labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP123456789")
+            labels["itsm_app_id"] = os.getenv("ITSM_APP_ID", "APPD-212426")
+            labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP11846700")
             forced_event_id = os.getenv("ITSM_EVENT_ID")
             labels["itsm_event_id"] = forced_event_id if forced_event_id else generate_itsm_event_id()
             labels["itsm_severity"] = compute_itsm_severity(labels.get("severity", "info"))
