@@ -15,6 +15,17 @@ client: httpx.AsyncClient  # same structure as your original code
 # Lifespan: set up Async HTTP client (optional forwarding)
 # ---------------------------------------------------------
 
+
+def compute_itsm_severity(sev: str) -> str:
+    sev = sev.lower()
+
+    if sev == "critical":
+        return "CRITICAL"
+    if sev in ("major", "high"):
+        return "MAJOR"
+    # everything else becomes MINOR
+    return "MINOR"
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -119,7 +130,7 @@ async def receive_alert(request: Request):
             labels["itsm_app_id"] = "APPD-123456"
             labels["itsm_contract_id"] = "10APP123456789"
             labels["itsm_event_id"] = "12345"
-            labels["itsm_severity"] = "MAJOR"
+            labels["itsm_severity"] = compute_itsm_severity(labels.get("severity", "info"))
 
         # ---------------------------------------------------------
         # DYNAMIC LABELS
