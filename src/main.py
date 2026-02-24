@@ -78,6 +78,21 @@ app = FastAPI(
 # /alert endpoint: receives, logs, enriches alerts
 # ---------------------------------------------------------
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+@app.get("/ready")
+async def readiness():
+    # If client exists and is not closed, we are ready.
+    global client
+    try:
+        if client and not client.is_closed:
+            return {"ready": True}
+    except Exception:
+        pass
+    raise HTTPException(status_code=503, detail="Not ready")
+
 @app.post("/alert")
 async def receive_alert(request: Request):
     """
