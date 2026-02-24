@@ -1,137 +1,136 @@
 import os
-from contextlib import asynccontextmanager  # New import for lifespan
+from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Request, HTTPException
+import json
 
-# -----------------------------------------------------------------------------
-# Pydantic Response Model
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------
+# Globals
+# ---------------------------------------------------------
 
+client: httpx.AsyncClient  # same structure as your original code
 
-class GistResponse(BaseModel):
-    """Defines the structured output for a single Gist."""
-
-    id: str = Field(..., description="The unique ID of the GitHub Gist.")
-    description: str | None = Field(None, description="The description of the Gist.")
-    html_url: str = Field(..., description="The direct URL to the Gist on github.com.")
-    files: list[str] = Field(
-        ..., description="A list of filenames contained in the Gist."
-    )
-
-
-# -----------------------------------------------------------------------------
-# Lifespan Context Manager and Global Client
-# -----------------------------------------------------------------------------
-
-# Declare the client globally, but don't initialize it here.
-client: httpx.AsyncClient
-
+# ---------------------------------------------------------
+# Lifespan: set up Async HTTP client (optional forwarding)
+# ---------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Initializes the httpx client on startup and closes it on shutdown.
-    This replaces the deprecated @app.on_event.
+    Initializes an httpx client on startup and closes it on shutdown.
+    Matches your original design.
     """
     global client
 
-    # --- STARTUP
-    # The GITHUB_TOKEN environment variable will be read here if available
-    github_token = os.getenv("GITHUB_TOKEN")
+    # Optional: use env var to configure Alertmanager forwarding
+    alertmanager_url = os.getenv("ALERTMANAGER_URL")
 
-    auth_headers = {"User-Agent": "FastAPIGistAPI/1.0"}
-    if github_token:
-        auth_headers["Authorization"] = f"token {github_token}"
-        print("INFO: Authenticated GitHub requests enabled.")
+    headers = {"User-Agent": "GrafanaAlertEnricher/1.0"}
 
     client = httpx.AsyncClient(
-        base_url="https://api.github.com", headers=auth_headers, timeout=5.0
+        timeout=5.0,
+        headers=headers,
     )
+
+    print("INFO: Alert Enrichment service started.")
+    if alertmanager_url:
+        print(f"INFO: Forwarding enabled → {alertmanager_url}")
 
     yield
 
     await client.aclose()
+    print("INFO: HTTP client closed.")
 
+# ---------------------------------------------------------
+# FastAPI Application
+# ---------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# FastAPI Application & Async HTTP Client Setup
-# -----------------------------------------------------------------------------
-
-# Pass the lifespan function to the FastAPI constructor
 app = FastAPI(
-    title="GitHub Gists Public API",
+    title="Grafana Alert Enrichment Proxy",
     version="1.0.0",
-    lifespan=lifespan,  # <-- Attach LIFESPAN HERE
+    lifespan=lifespan,
 )
 
-# NOTE: The deprecated @app.on_event("shutdown") function is now removed.
+# ---------------------------------------------------------
+# /alert endpoint: receives, logs, enriches alerts
+# ---------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# API Route Definition: /<username>
-# -----------------------------------------------------------------------------
-
-
-@app.get(
-    "/{username}", response_model=list[GistResponse], summary="List a User's Public Gists"
-)
-async def get_user_gists(username: str):
+@app.post("/alert")
+async def receive_alert(request: Request):
     """
-    Fetches public Gists for a given GitHub user asynchronously.
+    Receives Grafana or Prometheus-style alert JSON,
+    logs it, enriches labels, and returns enriched JSON.
     """
+
+    raw_body = await request.body()
+    print("\n================ RAW INCOMING ALERT ================")
+    print(raw_body.decode())
+
     try:
-        # ASYNC request using httpx
-        response = await client.get(f"/users/{username}/gists")
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-        # 1. HANDLE 404 EXPLICITLY HERE (This is the fix)
-        if response.status_code == 404:
-            raise HTTPException(
-                status_code=404,
-                detail=f"GitHub user '{username}' not found or has no public Gists.",
+    print("\n================ PARSED ALERT JSON ================")
+    print(json.dumps(payload, indent=2))
+
+    # ---------------------------------------------------------
+    # Enrichment: add labels & annotations
+    # Grafana/Alertmanager format is usually a list of alerts
+    # ---------------------------------------------------------
+
+    if isinstance(payload, list):
+        enriched_payload = []
+
+        for alert in payload:
+            alert.setdefault("labels", {})
+            alert.setdefault("annotations", {})
+
+            # Add enrichment labels
+            alert["labels"]["enriched_by"] = "fastapi-lifespan-proxy"
+            alert["labels"]["environment"] = os.getenv("ENV", "dev")
+
+            # Add annotation
+            alert["annotations"]["processed_at"] = "lifespan-proxy"
+
+            enriched_payload.append(alert)
+
+    else:
+        # Handle non-standard formats gracefully
+        enriched_payload = {
+            "original": payload,
+            "note": "Non-standard alert structure; wrapping output"
+        }
+
+    print("\n================ ENRICHED ALERT JSON ================")
+    print(json.dumps(enriched_payload, indent=2))
+
+    # ---------------------------------------------------------
+    # Optional: Forward to Alertmanager (disabled by default)
+    # ---------------------------------------------------------
+
+    alertmanager_url = os.getenv("ALERTMANAGER_URL")
+
+    if alertmanager_url:
+        try:
+            resp = await client.post(
+                alertmanager_url,
+                json=enriched_payload,
+                headers={"Content-Type": "application/json"},
             )
+            print(f"Forwarded to Alertmanager → HTTP {resp.status_code}")
+        except Exception as e:
+            print("ERROR forwarding to Alertmanager:", e)
 
-        # 2. Raise for ALL OTHER ERRORS (4xx/5xx)
-        response.raise_for_status()  # Raises an exception for 4xx/5xx status codes
-
-        gists_data = response.json()
-
-        gist_list = []
-        for gist in gists_data:
-            # Extract filenames from the nested 'files' dictionary
-            filenames = list(gist.get("files", {}).keys())
-
-            gist_info = {
-                "id": gist.get("id"),
-                "description": gist.get("description") or "No description provided",
-                "html_url": gist.get("html_url"),
-                "files": filenames,
-            }
-            # The Pydantic model validates and formats the output
-            gist_list.append(GistResponse(**gist_info))
-
-        return gist_list
-
-    except httpx.HTTPStatusError as e:
-        # This catches all 4xx/5xx errors raised by response.raise_for_status()
-        # (excluding the 404 we already handled).
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail="Error fetching data from GitHub API.",
-        ) from None
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503, detail="Could not connect to the GitHub API service."
-        ) from None
+    return enriched_payload
 
 
-# -----------------------------------------------------------------------------
-# Uvicorn Launcher (for direct development run)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------
+# Manual development runner
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn
-
     HOST_BIND = os.getenv("HOST_BIND", "127.0.0.1")
-    # Runs the application on http://127.0.0.1:8080 as requested
     uvicorn.run("src.main:app", host=HOST_BIND, port=8080, reload=True)
