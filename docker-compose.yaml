@@ -1,0 +1,22 @@
+services:
+  # 1. FastAPI Web Server Service
+  web:
+    # Use the image built by the build stage below
+    image: fastapi-gists-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    
+    # Map container port 8080 to host port 8080
+    ports:
+      - "8080:8080"
+    
+    # Environment variables for the FastAPI application
+    environment:
+      # Set host binding to 0.0.0.0 for container accessibility 
+      HOST_BIND: 0.0.0.0
+      # GITHUB_TOKEN: ${GITHUB_TOKEN} 
+    
+    # Restart policy
+    restart: always

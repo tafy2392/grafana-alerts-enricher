@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+fastapi_github_gists.egg-info/PKG-INFO
+fastapi_github_gists.egg-info/SOURCES.txt
+fastapi_github_gists.egg-info/dependency_links.txt
+fastapi_github_gists.egg-info/requires.txt
+fastapi_github_gists.egg-info/top_level.txt

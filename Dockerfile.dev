@@ -1,0 +1,41 @@
+# --- Stage 1: Builder ---
+FROM python:3.11-slim-bookworm AS builder
+
+# 1. Copy the uv binary directly from the official image (fastest & safest)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# 2. Performance optimizations
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+
+# 3. Cache dependencies: Copy only lockfiles first
+# This ensures layers are only rebuilt if your dependencies change.
+# Assuming you have uv.lock; if not, use 'uv pip compile' as you did.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --frozen --no-install-project --no-dev
+
+# --- Stage 2: Runtime ---
+FROM python:3.11-slim-bookworm AS runtime
+
+WORKDIR /app
+
+# 4. Copy the virtual environment from the builder
+# This brings all your dependencies without needing 'uv' or 'pip' in the final image.
+COPY --from=builder /app/.venv /app/.venv
+
+# 5. Place the venv at the front of the PATH
+# This makes 'python' and 'uvicorn' refer to the ones inside the venv automatically.
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
+
+# 6. Copy source code last (changes most frequently)
+COPY src/ src/
+
+EXPOSE 8080
+
+# No need to call 'python -m uvicorn' if it's in your PATH
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]

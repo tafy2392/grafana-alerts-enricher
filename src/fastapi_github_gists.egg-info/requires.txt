@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+httpx
+
+[test]
+pytest
+pytest-asyncio
+respx
+pytest-cov
+ruff>=0.4.5
+mypy>=1.10.0
+black>=24.4.2
