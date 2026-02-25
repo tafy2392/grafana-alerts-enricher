@@ -28,14 +28,31 @@ client: httpx.AsyncClient  # same structure as your original code
 
 
 def compute_itsm_severity(sev: str) -> str:
-    sev = sev.lower()
+    sev = str(sev).strip().lower()
 
-    if sev == "critical":
+    if sev in ("critical", "major", "crit", "p1", "sev1"):
         return "CRITICAL"
-    if sev in ("major", "high"):
+    if sev in ("warning", "warn", "medium", "high", "p2", "sev2"):
         return "MAJOR"
     # everything else becomes MINOR
     return "MINOR"
+
+
+def normalize_severity(sev: str | None) -> str:
+    if not sev:
+        return "info"
+
+    normalized = str(sev).strip().lower()
+
+    if normalized in ("critical", "major", "crit", "p1", "sev1"):
+        return "critical"
+    if normalized in ("warning", "warn", "medium", "p2", "sev2"):
+        return "warning"
+    if normalized in ("low", "info", "minor", "informational", "p3", "sev3"):
+        return "info"
+    if normalized == "high":
+        return "other"
+    return "other"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -133,6 +150,7 @@ async def receive_alert(request: Request):
         alert.setdefault("labels", {})
         alert.setdefault("annotations", {})
         labels = alert["labels"]
+        source_severity = labels.get("severity")
 
         # --- Static labels
         labels["integration"] = "external"
@@ -141,8 +159,8 @@ async def receive_alert(request: Request):
         labels["teams_enabled"] = "false"
         labels["namespace"] = os.getenv("ALERT_NAMESPACE", "monitoring")
 
-        # Default severity if missing
-        labels["severity"] = labels.get("severity", "info")
+        # Force severity to one of: critical, warning, info, other
+        labels["severity"] = normalize_severity(labels.get("severity"))
 
         # --- Conditional labels when ITSM is enabled
         if labels["itsm_enabled"] == "true":
@@ -150,7 +168,8 @@ async def receive_alert(request: Request):
             labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP11846700")
             forced_event_id = os.getenv("ITSM_EVENT_ID")
             labels["itsm_event_id"] = forced_event_id if forced_event_id else generate_itsm_event_id()
-            labels["itsm_severity"] = compute_itsm_severity(labels.get("severity", "info"))
+            severity_for_itsm = source_severity if source_severity is not None else labels.get("severity", "info")
+            labels["itsm_severity"] = compute_itsm_severity(severity_for_itsm)
 
         # --- Dynamic labels / metadata
         labels["cluster_name"] = os.getenv("CLUSTER_NAME", "unknown-cluster")
