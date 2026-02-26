@@ -40,7 +40,7 @@ def compute_itsm_severity(sev: str) -> str:
         return "CRITICAL"
     if sev in ("major", "high", "p2", "sev2"):
         return "MAJOR"
-    if sev in ("warning", "warn", "medium"):
+    if sev in ("warning", "warn", "medium", "moderate", "p3", "sev3", "minor"):
         return "MINOR"
     # everything else becomes warning
     return "WARNING"
@@ -56,9 +56,9 @@ def normalize_severity(sev: str | None) -> str:
         return "Critical"
     if normalized in ("major", "high", "p2", "sev2"):
         return "Major"
-    if normalized in ("warning", "warn", "medium"):
+    if normalized in ("minor", "medium", "moderate", "p3", "sev3"):
         return "Minor"
-    if normalized in ("low", "info", "minor", "informational", "p3", "sev3"):
+    if normalized in ("warning", "warn", "low", "info", "informational", "p4", "sev4"):
         return "Warning"
     if normalized == "high":
         return "Major"
