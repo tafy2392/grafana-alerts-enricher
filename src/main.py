@@ -62,7 +62,7 @@ def normalize_severity(sev: str | None) -> str:
         return "Warning"
     if normalized == "high":
         return "Major"
-    return "other"
+    return "Warning"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
