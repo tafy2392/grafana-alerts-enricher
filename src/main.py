@@ -26,32 +26,42 @@ client: httpx.AsyncClient  # same structure as your original code
 # Lifespan: set up Async HTTP client (optional forwarding)
 # ---------------------------------------------------------
 
+# Docs for severity mapping 
+# OK -
+# Warning - Low
+# Minor - Medium
+# Major - High
+# Critical- Critical
 
 def compute_itsm_severity(sev: str) -> str:
     sev = str(sev).strip().lower()
 
-    if sev in ("critical", "major", "crit", "p1", "sev1"):
+    if sev in ("critical", "crit", "p1", "sev1"):
         return "CRITICAL"
-    if sev in ("warning", "warn", "medium", "high", "p2", "sev2"):
+    if sev in ("major", "high", "p2", "sev2"):
         return "MAJOR"
-    # everything else becomes MINOR
-    return "MINOR"
+    if sev in ("warning", "warn", "medium"):
+        return "MINOR"
+    # everything else becomes warning
+    return "WARNING"
 
 
 def normalize_severity(sev: str | None) -> str:
     if not sev:
-        return "info"
+        return "Warning"  # default if severity is missing or empty
 
     normalized = str(sev).strip().lower()
 
-    if normalized in ("critical", "major", "crit", "p1", "sev1"):
-        return "critical"
-    if normalized in ("warning", "warn", "medium", "p2", "sev2"):
-        return "warning"
+    if normalized in ("critical", "crit", "p1", "sev1"):
+        return "Critical"
+    if normalized in ("major", "high", "p2", "sev2"):
+        return "Major"
+    if normalized in ("warning", "warn", "medium"):
+        return "Minor"
     if normalized in ("low", "info", "minor", "informational", "p3", "sev3"):
-        return "info"
+        return "Warning"
     if normalized == "high":
-        return "other"
+        return "Major"
     return "other"
 
 @asynccontextmanager
