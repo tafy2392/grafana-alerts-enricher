@@ -40,7 +40,7 @@ def compute_itsm_severity(sev: str) -> str:
         return "CRITICAL"
     if sev in ("major", "high", "p2", "sev2"):
         return "MAJOR"
-    if sev in ("warning", "warn", "medium", "moderate", "p3", "sev3", "minor"):
+    if sev in ("medium", "moderate", "p3", "sev3", "minor"):
         return "MINOR"
     # everything else becomes warning
     return "WARNING"
