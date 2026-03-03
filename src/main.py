@@ -31,6 +31,7 @@ client: httpx.AsyncClient  # same structure as your original code
 # Warning - Low
 # Minor - Medium
 # Major - High
+# Slight change
 # Critical- Critical
 
 def compute_itsm_severity(sev: str) -> str:
