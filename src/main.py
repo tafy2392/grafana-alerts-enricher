@@ -8,13 +8,32 @@ import json
 
 import string
 import secrets
-
+import re
 
 def generate_itsm_event_id(length: int = 5) -> str:
     """Return a random uppercase alphabetic string of given length (default 5)."""
     alphabet = string.ascii_uppercase  # 'A'..'Z'
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
+
+def itsm_id_from_alertname(alertname: str, length: int = 5) -> str:
+    """
+    Produce a stable ITSM Event ID from alertname:
+    - Uppercase
+    - Keep only A–Z and 0–9
+    - Pad with 'X' if shorter than required length
+    """
+    if not alertname:
+        return "X" * length
+
+    # Only alphanumeric, uppercase
+    cleaned = re.sub(r'[^A-Za-z0-9]', '', alertname.upper())
+
+    # Pad if too short
+    if len(cleaned) < length:
+        cleaned = cleaned.ljust(length, "X")
+
+    return cleaned[:length]
 
 # ---------------------------------------------------------
 # Globals
@@ -172,13 +191,14 @@ async def receive_alert(request: Request):
 
         # Force severity to one of: critical, warning, info, other
         labels["severity"] = normalize_severity(labels.get("severity"))
+        source_name = labels.get("alertname") or labels.get("ruleName") or "XXXXX"
 
         # --- Conditional labels when ITSM is enabled
         if labels["itsm_enabled"] == "true":
             labels["itsm_app_id"] = os.getenv("ITSM_APP_ID", "APPD-212426")
             labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP11846700")
             forced_event_id = os.getenv("ITSM_EVENT_ID")
-            labels["itsm_event_id"] = forced_event_id if forced_event_id else generate_itsm_event_id()
+            labels["itsm_event_id"] = forced_event_id if forced_event_id else itsm_id_from_alertname(source_name)
             severity_for_itsm = source_severity if source_severity is not None else labels.get("severity", "info")
             labels["itsm_severity"] = compute_itsm_severity(severity_for_itsm)
 
