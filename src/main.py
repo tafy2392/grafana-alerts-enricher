@@ -56,33 +56,34 @@ client: httpx.AsyncClient  # same structure as your original code
 def compute_itsm_severity(sev: str) -> str:
     sev = str(sev).strip().lower()
 
-    if sev in ("critical", "crit", "p1", "sev1"):
-        return "CRITICAL"
-    if sev in ("major", "high", "p2", "sev2"):
+    if sev == "major":
         return "MAJOR"
-    if sev in ("medium", "moderate", "p3", "sev3", "minor"):
+    if sev == "minor":
         return "MINOR"
-    # everything else becomes warning
+    if sev == "warning":
+        return "WARNING"
+    # unsupported values default to warning
     return "WARNING"
 
 
-def normalize_severity(sev: str | None) -> str:
+def normalize_severity(sev: str | None) -> str | None:
+    """
+    Normalize source severities to canonical values.
+    Only warning/minor/major are supported for forwarding.
+    Returns None for missing/unsupported values so callers can drop the alert.
+    """
     if not sev:
-        return "Warning"  # default if severity is missing or empty
+        return None
 
     normalized = str(sev).strip().lower()
 
-    if normalized in ("critical", "crit", "p1", "sev1"):
-        return "Critical"
-    if normalized in ("major", "high", "p2", "sev2"):
-        return "Major"
-    if normalized in ("minor", "medium", "moderate", "p3", "sev3"):
-        return "Minor"
-    if normalized in ("warning", "warn", "low", "info", "informational", "p4", "sev4"):
-        return "Warning"
-    if normalized == "high":
-        return "Major"
-    return "Warning"
+    severity_map = {
+        "major": "Major",
+        "minor": "Minor",
+        "warning": "Warning",
+    }
+
+    return severity_map.get(normalized)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -175,12 +176,13 @@ async def receive_alert(request: Request):
         )
 
     # 4) Enrich each alert
+    allowed_severities = {"Warning", "Minor", "Major"}
     enriched_alerts = []
     for alert in alerts:
         alert.setdefault("labels", {})
         alert.setdefault("annotations", {})
         labels = alert["labels"]
-        source_severity = labels.get("severity")
+        source_severity = labels.get("severityMute") or labels.get("severity")
 
         # --- Static labels
         labels["integration"] = "external"
@@ -189,8 +191,11 @@ async def receive_alert(request: Request):
         labels["teams_enabled"] = "false"
         labels["namespace"] = os.getenv("ALERT_NAMESPACE", "monitoring")
 
-        # Force severity to one of: critical, warning, info, other
-        labels["severity"] = normalize_severity(labels.get("severity"))
+        # Keep only warning/minor/major alerts, ignore everything else.
+        normalized_severity = normalize_severity(source_severity)
+        if normalized_severity not in allowed_severities:
+            continue
+        labels["severity"] = normalized_severity
         source_name = labels.get("alertname") or labels.get("ruleName") or "XXXXX"
 
         # --- Conditional labels when ITSM is enabled
@@ -199,7 +204,7 @@ async def receive_alert(request: Request):
             labels["itsm_contract_id"] = os.getenv("ITSM_CONTRACT_ID", "10APP11846700")
             forced_event_id = os.getenv("ITSM_EVENT_ID")
             labels["itsm_event_id"] = forced_event_id if forced_event_id else itsm_id_from_alertname(source_name)
-            severity_for_itsm = source_severity if source_severity is not None else labels.get("severity", "info")
+            severity_for_itsm = source_severity if source_severity is not None else labels.get("severity", "warning")
             labels["itsm_severity"] = compute_itsm_severity(severity_for_itsm)
 
         # --- Dynamic labels / metadata
